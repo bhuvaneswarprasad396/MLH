@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { FileSearch, Plus } from 'lucide-react';
+import { FileSearch, Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import AppHeader from '@/components/AppHeader';
 import AnalyzingOverlay from '@/components/workspace/AnalyzingOverlay';
@@ -16,7 +16,7 @@ import VoicePanel from '@/components/workspace/VoicePanel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { buildHighlights } from '@/lib/highlight';
 import { getOcr, getPrefs, setPrefs } from '@/lib/sessionStore';
-import { addScreenshot, getSessionView, patchStep, postMessage, viewUrlsFor } from '@/lib/troubleshoot';
+import { addScreenshot, getSessionView, patchStep, postMessage, requestAlternative, refreshDiagnosis, viewUrlsFor } from '@/lib/troubleshoot';
 
 export default function Workspace() {
   const { id } = useParams();
@@ -27,6 +27,7 @@ export default function Workspace() {
   const [stage, setStage] = useState(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [showHighlights, setShowHighlights] = useState(true);
+  const [selectedHighlightId, setSelectedHighlightId] = useState('');
   const [language, setLanguage] = useState(getPrefs().language || 'en');
 
   useEffect(() => {
@@ -90,7 +91,26 @@ export default function Workspace() {
   };
 
   const handleAskAlternative = (step) => {
-    handleSend(`Step ${step.order} “${step.title}” did not give me the expected result. What is the alternative fix?`);
+    try {
+      setSession(requestAlternative({ sessionId: id, stepId: step.id }));
+      toast.success('A relevant alternative step was added.');
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setBusy('refresh');
+    setStage({ stage: 'model', label: 'Refreshing diagnosis, steps, and voice' });
+    try {
+      setSession(await refreshDiagnosis({ sessionId: id, language, onStage: setStage }));
+      toast.success('Diagnosis refreshed from the saved screenshot and context.');
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setBusy('');
+      setStage(null);
+    }
   };
 
   if (notFound) {
@@ -143,6 +163,11 @@ export default function Workspace() {
       />
 
       <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
+        <div className="flex justify-end">
+          <button type="button" onClick={handleRefresh} disabled={busy === 'refresh'} className="inline-flex items-center gap-2 rounded-lg border border-evidence/50 bg-evidence/10 px-3 py-2 text-xs text-evidence disabled:opacity-50">
+            <RefreshCw className={`h-3.5 w-3.5 ${busy === 'refresh' ? 'animate-spin' : ''}`} /> Refresh diagnosis
+          </button>
+        </div>
         <StatusBanner session={session} />
         {stage && <AnalyzingOverlay stage={stage} />}
 
@@ -156,12 +181,15 @@ export default function Workspace() {
               onToggleHighlights={() => setShowHighlights((value) => !value)}
               activeIndex={activeIndex}
               onActiveIndex={setActiveIndex}
+              selectedHighlightId={selectedHighlightId}
             />
             <HighlightList
               highlights={highlights}
               ocrAvailable={Boolean(ocr?.words?.length)}
               showHighlights={showHighlights}
               onToggleHighlights={() => setShowHighlights((value) => !value)}
+              selectedId={selectedHighlightId}
+              onSelect={(highlightId) => { setSelectedHighlightId(highlightId); setShowHighlights(true); }}
             />
           </div>
 

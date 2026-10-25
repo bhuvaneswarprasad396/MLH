@@ -14,7 +14,7 @@ import {
   normalizeDiagnosis,
 } from '@/lib/diagnosisSchema';
 import { dedupeWarnings, normalizeWarnings, sanitizeUntrusted } from '@/lib/safetyRules';
-import { getSession, saveSession, setPrefs, storeOcr } from '@/lib/sessionStore';
+import { getOcr, getSession, saveSession, setPrefs, storeOcr } from '@/lib/sessionStore';
 
 const MAX_OCR_CHARS = 12000;
 const MAX_SCREENSHOTS = 6;
@@ -145,6 +145,18 @@ export async function analyzeScreenshot({ file, language = 'en', note = '', onSt
   return session;
 }
 
+export async function refreshDiagnosis({ sessionId, language, onStage }) {
+  const session = requireSession(sessionId);
+  const screenshot = session.screenshots?.[0];
+  const ocr = screenshot ? getOcr(sessionId, screenshot.file_uri) : null;
+  onStage?.({ stage: 'model', label: 'Refreshing this session from saved evidence' });
+  const cleaned = sanitizeUntrusted(String(ocr?.words?.map((word) => word.text).join(' ') || session.observed_error || '').slice(0, MAX_OCR_CHARS));
+  const raw = await callVisionModel({ prompt: `${SYSTEM_PROMPT}\n\n${buildAnalysisPrompt({ ocrText: cleaned.text, userNote: session.user_note || '' })}`, responseSchema: DIAGNOSIS_JSON_SCHEMA });
+  const normalized = normalizeDiagnosis(raw);
+  const next = { ...session, ...diagnosisToSessionFields(normalized), language: language || session.language, updated_at: stamp(), messages: [...(session.messages || []), makeMessage('system', 'system', 'Diagnosis, steps, and voice script refreshed from saved evidence.')] };
+  saveSession(next);
+  return next;
+}
 export async function postMessage({ sessionId, text, language, onStage }) {
   const session = requireSession(sessionId);
   onStage?.({ stage: 'model', label: 'Working through your answer' });
@@ -260,6 +272,26 @@ export async function addScreenshot({ sessionId, file, label = 'after', note = '
   return next;
 }
 
+export function requestAlternative({ sessionId, stepId }) {
+  const session = requireSession(sessionId);
+  const original = (session.recommended_steps || []).find((step) => step.id === stepId);
+  const title = session.short_title || session.title || '';
+  let alternative;
+  if (/AI service request failed/i.test(title)) {
+    alternative = { title: 'Verify provider model access', instructions: 'Open the Hugging Face account settings and confirm the selected model is enabled for the account. Keep access tokens private and do not paste them into the app.', expected_result: 'You can confirm whether the selected model is available to the account.', risk_level: 'read_only', command: null, why_it_helps: 'Provider requests fail when a token is missing, expired, or the model is not permitted.' };
+  } else if (/speech voice/i.test(title)) {
+    alternative = { title: 'Use an installed matching voice', instructions: 'Select a listed voice in the Voice tab, or install the selected language speech feature in Windows and restart the browser.', expected_result: 'A matching voice appears in the dropdown and playback starts.', risk_level: 'read_only', command: null, why_it_helps: 'The browser can only speak voices installed on the device.' };
+  } else if (/Package|dependency/i.test(title)) {
+    alternative = { title: 'Inspect the named dependency', instructions: 'Check which package requested the dependency before reinstalling anything.', expected_result: 'You identify the package and version conflict.', risk_level: 'read_only', command: null, why_it_helps: 'Targeted information avoids unnecessary reinstalling.' };
+  } else {
+    alternative = { title: 'Capture the exact result', instructions: 'Paste the exact message shown after the previous step and state what action you took.', expected_result: 'The next recommendation can use specific evidence.', risk_level: 'read_only', command: null, why_it_helps: 'A useful alternative depends on the observed result.' };
+  }
+  const appended = appendSteps(session.recommended_steps || [], [alternative]);
+  const message = `Alternative added for step ${original?.order || ''} “${original?.title || 'selected step'}”: ${alternative.title}.`;
+  const next = { ...session, recommended_steps: appended.steps, safety_warnings: dedupeWarnings([...(session.safety_warnings || []), ...appended.warnings]), attempted_count: countAttempted(appended.steps), updated_at: stamp(), messages: [...(session.messages || []), makeMessage('assistant', 'chat', message)] };
+  saveSession(next);
+  return next;
+}
 export function patchStep({ sessionId, stepId, patch }) {
   const session = requireSession(sessionId);
   const steps = (session.recommended_steps || []).map((step) => (step.id === stepId ? { ...step, ...patch } : step));

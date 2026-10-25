@@ -13,6 +13,7 @@ export default function ScreenshotViewer({
   onToggleHighlights,
   activeIndex,
   onActiveIndex,
+  selectedHighlightId,
 }) {
   const [zoom, setZoom] = useState(1);
   const [compare, setCompare] = useState(false);
@@ -105,7 +106,7 @@ export default function ScreenshotViewer({
                   <div
                     key={highlight.id}
                     title={highlight.explanation}
-                    className={`absolute rounded border-2 ${
+                    className={`absolute rounded border-2 transition-all ${highlight.id === selectedHighlightId ? 'z-20 scale-[1.03] border-white bg-evidence/35 shadow-[0_0_0_3px_hsl(var(--evidence)/.35)]' : ''} ${
                       highlight.kind === 'evidence' ? 'border-evidence bg-evidence/20' : 'border-inference bg-inference/20'
                     }`}
                     style={{
