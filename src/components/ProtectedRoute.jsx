@@ -1,0 +1,2 @@
+import { Navigate, Outlet, useLocation } from 'react-router-dom'; import { useAuth } from '@/lib/localAuth';
+export default function ProtectedRoute(){const {isAuthenticated}=useAuth();const location=useLocation();return isAuthenticated?<Outlet/>:<Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname)}`} replace/>}
